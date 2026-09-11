@@ -1,0 +1,17 @@
+# Build output and caches: the image builds from source in its own layer.
+build/
+.gradle/
+.kotlin/
+
+# Local tooling
+.idea/
+*.iml
+.git/
+.github/
+
+# Docs and deploy artifacts are not needed inside the image
+README.md
+deploy/
+Dockerfile
+.dockerignore
+docker-compose.yml

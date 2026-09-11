@@ -1,0 +1,1 @@
+No Todoist API token. Set todoist.apiToken in the config or export ACTS_TODOIST_TOKEN. Copy it from Todoist -> Settings -> Integrations -> Developer.

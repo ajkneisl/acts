@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<c:mkcalendar xmlns:d="DAV:"
+              xmlns:c="urn:ietf:params:xml:ns:caldav"
+              xmlns:i="http://apple.com/ns/ical/">
+  <d:set>
+    <d:prop>
+      <d:displayname>{{displayName}}</d:displayname>
+      <c:supported-calendar-component-set>
+        <c:comp name="VEVENT"/>
+      </c:supported-calendar-component-set>
+      <i:calendar-color>{{color}}</i:calendar-color>
+    </d:prop>
+  </d:set>
+</c:mkcalendar>
