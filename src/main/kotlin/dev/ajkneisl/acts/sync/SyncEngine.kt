@@ -13,6 +13,7 @@ import dev.ajkneisl.acts.sync.models.SyncAction
 import dev.ajkneisl.acts.sync.models.SyncReport
 import dev.ajkneisl.acts.todoist.models.TodoistTask
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -77,11 +78,13 @@ class SyncEngine(
         }
 
         // ---- pass 2: events with no in-scope task ------------------------------
+        // One request at most, and only if some event has actually lost its task.
+        val completed = lazy { completedIds(now) }
         val inScopeIds = inScope.mapTo(mutableSetOf()) { it.id }
         for (parsed in events) {
             val taskId = parsed.taskId
             if (taskId != null && taskId in inScopeIds) continue
-            state = reconcileOrphanEvent(parsed, tasksById, state, actions, dryRun, now)
+            state = reconcileOrphanEvent(parsed, tasksById, completed, state, actions, dryRun, now)
         }
 
         // The token for the state we looked at, never one re-read after our own writes:
@@ -160,6 +163,11 @@ class SyncEngine(
 
         val direction =
             when {
+                // The done mark is ours, not something the user typed: a task that is open again
+                // has to lose it, whatever the conflict policy would otherwise say about a
+                // summary that changed on the calendar side.
+                Mapper.isMarkedDone(existing.event) -> Direction.TO_CALENDAR
+
                 // A repeating task's event is a read-only projection. Todoist gives recurrence
                 // only as a phrase plus the next date, and writing a date back would replace the
                 // whole due specification and destroy the repeat -- so a calendar edit can never
@@ -388,6 +396,7 @@ class SyncEngine(
     private fun reconcileOrphanEvent(
         parsed: ParsedEvent,
         tasksById: Map<String, TodoistTask>,
+        completed: Lazy<Set<String>?>,
         stateIn: SyncState,
         actions: MutableList<SyncAction>,
         dryRun: Boolean,
@@ -397,12 +406,36 @@ class SyncEngine(
         val taskId = parsed.taskId
 
         if (taskId != null) {
-            // Ours, but the task is completed, deleted, or has left the sync window.
+            // Already marked: the block is a record of something finished, and there is nothing
+            // left to reconcile. Bailing out here also spares us asking Todoist about the same
+            // long-done task on every single pass for as long as the event lives.
+            if (Mapper.isMarkedDone(parsed.event)) return state.withoutLink(taskId)
+
+            // Ours, but the task is completed, deleted, or has left the sync window. A completed
+            // task is simply absent from the active list, so absence alone does not say which.
             val task = tasksById[taskId]
+            val isDone =
+                when {
+                    task != null -> task.checked && !task.isDeleted
+                    else -> completed.value?.contains(taskId)
+                }
+
+            if (isDone == true) return markDone(taskId, parsed, state, actions, dryRun, now)
+            if (isDone == null) {
+                // Todoist would not tell us which it was. Deleting on a guess would throw away a
+                // block we were asked to keep, so leave it exactly as it is and try again later.
+                actions +=
+                    SyncAction(
+                        ActionKind.SKIPPED,
+                        parsed.event.summary,
+                        "cannot tell whether the task was completed or deleted; leaving the event",
+                    )
+                return state
+            }
+
             val reason =
                 when {
                     task == null -> "task no longer exists"
-                    task.checked -> "task completed"
                     task.isDeleted -> "task deleted"
                     else -> "task left the sync window"
                 }
@@ -482,6 +515,57 @@ class SyncEngine(
         )
     }
 
+    /** Keeps the block and marks it done, rather than deleting the evidence of a finished task. */
+    private fun markDone(
+        taskId: String,
+        parsed: ParsedEvent,
+        state: SyncState,
+        actions: MutableList<SyncAction>,
+        dryRun: Boolean,
+        now: Instant,
+    ): SyncState {
+        actions += SyncAction(ActionKind.UPDATE_EVENT, parsed.event.summary, "task completed")
+        if (dryRun) return state
+
+        try {
+            calendar.update(
+                parsed.href,
+                Ics.render(Mapper.markDone(parsed.event), now),
+                ifMatch = parsed.etag,
+            )
+        } catch (e: SyncConflictException) {
+            // Somebody touched the event mid-pass. Keep the link so the next pass marks it.
+            actions +=
+                SyncAction(
+                    ActionKind.SKIPPED,
+                    parsed.event.summary,
+                    "calendar changed mid-sync, retrying next pass",
+                )
+            return state
+        }
+        return state.withoutLink(taskId)
+    }
+
+    /**
+     * Ids completed recently, or null when Todoist could not say. Deliberately not fatal: a sync
+     * that otherwise works should not stop because this one lookup is unavailable.
+     */
+    private fun completedIds(now: Instant): Set<String>? =
+        runCatching {
+                tasks
+                    .listCompleted(
+                        now.minus(Duration.ofDays(COMPLETION_LOOKBACK_DAYS)),
+                        // Exclusive, and clocks disagree: a task completed a second ago must land
+                        // inside the window.
+                        now.plus(Duration.ofDays(1)),
+                    )
+                    .mapTo(mutableSetOf()) { it.id }
+            }
+            .getOrElse {
+                log.warn("Could not list completed tasks: {}", it.message)
+                null
+            }
+
     // ------------------------------------------------------------------- utils
 
     private enum class Direction {
@@ -508,4 +592,9 @@ class SyncEngine(
             is EventTime.Timed ->
                 start.instant.atZone(zone).toLocalDateTime().toString().replace('T', ' ')
         }
+
+    private companion object {
+        /** How far back to look for a completion. Long enough to cover a daemon that was down. */
+        const val COMPLETION_LOOKBACK_DAYS = 14L
+    }
 }

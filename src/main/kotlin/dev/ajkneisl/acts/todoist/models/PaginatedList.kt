@@ -7,5 +7,10 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class PaginatedList<T>(
     val results: List<T> = emptyList(),
+    /** The completed-task endpoints spell the very same page `items`. */
+    val items: List<T> = emptyList(),
     @SerialName("next_cursor") val nextCursor: String? = null,
-)
+) {
+    val page: List<T>
+        get() = results.ifEmpty { items }
+}

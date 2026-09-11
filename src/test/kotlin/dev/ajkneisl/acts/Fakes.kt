@@ -9,6 +9,7 @@ import dev.ajkneisl.acts.todoist.models.TaskPatch
 import dev.ajkneisl.acts.todoist.models.TodoistDue
 import dev.ajkneisl.acts.todoist.models.TodoistDuration
 import dev.ajkneisl.acts.todoist.models.TodoistTask
+import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
@@ -86,9 +87,24 @@ class FakeTodoist(initial: List<TodoistTask> = emptyList()) : TaskSide {
         initial.forEach { tasks[it.id] = it }
     }
 
-    override fun listTasks(): List<TodoistTask> = tasks.values.filter { !it.isDeleted }
+    /** Set to model the completed-task lookup being unavailable. */
+    var completedLookupFails = false
 
-    override fun getTask(id: String): TodoistTask? = tasks[id]
+    /** Active tasks only, as the real endpoint is: completing one takes it off this list. */
+    override fun listTasks(): List<TodoistTask> =
+        tasks.values.filter { !it.isDeleted && !it.checked }
+
+    override fun listCompleted(since: Instant, until: Instant): List<TodoistTask> {
+        if (completedLookupFails) error("completed lookup is unavailable")
+        return tasks.values.filter { task ->
+            if (!task.checked || task.isDeleted) return@filter false
+            val at = task.completedAt?.let { Instant.parse(it) } ?: return@filter true
+            !at.isBefore(since) && at.isBefore(until)
+        }
+    }
+
+    /** The real endpoint only ever returns an active task. */
+    override fun getTask(id: String): TodoistTask? = tasks[id]?.takeIf { !it.checked }
 
     override fun create(
         content: String,
@@ -114,7 +130,8 @@ class FakeTodoist(initial: List<TodoistTask> = emptyList()) : TaskSide {
     }
 
     override fun close(id: String) {
-        tasks[id] = tasks.getValue(id).copy(checked = true, updatedAt = stamp())
+        tasks[id] =
+            tasks.getValue(id).copy(checked = true, completedAt = COMPLETED_AT, updatedAt = stamp())
     }
 
     /** Simulates an edit made in the Todoist app. */
@@ -150,6 +167,9 @@ class FakeTodoist(initial: List<TodoistTask> = emptyList()) : TaskSide {
 
     private companion object {
         val UTC: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
+
+        /** Just before the tests' fixed clock, so a close lands inside the lookback window. */
+        const val COMPLETED_AT = "2026-09-10T11:59:00Z"
     }
 }
 

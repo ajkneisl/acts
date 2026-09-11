@@ -84,7 +84,7 @@ class SyncEngineTest {
     }
 
     @Test
-    fun `completing a task removes its event`() {
+    fun `completing a task marks its event done instead of deleting it`() {
         val todoist = FakeTodoist(listOf(task("1", "Ship", "2026-09-10T15:00:00Z")))
         val calendar = FakeCalendar()
         val first = engine(todoist, calendar).sync(SyncState())
@@ -92,9 +92,92 @@ class SyncEngineTest {
         todoist.close("1")
         val second = engine(todoist, calendar).sync(first.state)
 
+        assertEquals(listOf(ActionKind.UPDATE_EVENT), second.kinds())
+        val ics = calendar.objects.values.single().data!!
+        assertTrue(ics.contains("SUMMARY:\u2705 Ship"), ics)
+        assertTrue(second.state.links.isEmpty())
+    }
+
+    @Test
+    fun `an event already marked done is left alone`() {
+        val todoist = FakeTodoist(listOf(task("1", "Ship", "2026-09-10T15:00:00Z")))
+        val calendar = FakeCalendar()
+        var state = engine(todoist, calendar).sync(SyncState()).state
+
+        todoist.close("1")
+        state = engine(todoist, calendar).sync(state).state
+        val marked = calendar.objects.values.single()
+
+        val third = engine(todoist, calendar).sync(state)
+
+        assertTrue(third.actions.isEmpty(), third.actions.toString())
+        // Same ETag: the mark was not written a second time, and never stacks up.
+        assertEquals(marked.etag, calendar.objects.values.single().etag)
+        assertEquals(1, calendar.objects.values.single().data!!.split("\u2705").size - 1)
+    }
+
+    @Test
+    fun `re-opening a task clears the done mark`() {
+        val todoist = FakeTodoist(listOf(task("1", "Ship", "2026-09-10T15:00:00Z")))
+        val calendar = FakeCalendar()
+        var state = engine(todoist, calendar).sync(SyncState()).state
+
+        todoist.close("1")
+        state = engine(todoist, calendar).sync(state).state
+
+        todoist.editExternally("1") { it.copy(checked = false, completedAt = null) }
+        val report = engine(todoist, calendar).sync(state)
+
+        assertEquals(listOf(ActionKind.UPDATE_EVENT), report.kinds())
+        val ics = calendar.objects.values.single().data!!
+        assertTrue(ics.contains("SUMMARY:Ship"), ics)
+        assertTrue(!ics.contains("\u2705"), ics)
+    }
+
+    @Test
+    fun `a deleted task still loses its event`() {
+        val todoist = FakeTodoist(listOf(task("1", "Ship", "2026-09-10T15:00:00Z")))
+        val calendar = FakeCalendar()
+        val first = engine(todoist, calendar).sync(SyncState())
+
+        todoist.editExternally("1") { it.copy(isDeleted = true) }
+        val second = engine(todoist, calendar).sync(first.state)
+
         assertEquals(listOf(ActionKind.DELETE_EVENT), second.kinds())
         assertTrue(calendar.objects.isEmpty())
         assertTrue(second.state.links.isEmpty())
+    }
+
+    @Test
+    fun `an unanswerable completion lookup never deletes the event`() {
+        val todoist = FakeTodoist(listOf(task("1", "Ship", "2026-09-10T15:00:00Z")))
+        val calendar = FakeCalendar()
+        val first = engine(todoist, calendar).sync(SyncState())
+
+        todoist.close("1")
+        todoist.completedLookupFails = true
+        val second = engine(todoist, calendar).sync(first.state)
+
+        assertEquals(listOf(ActionKind.SKIPPED), second.kinds())
+        val ics = calendar.objects.values.single().data!!
+        assertTrue(ics.contains("SUMMARY:Ship"), ics)
+        // The link survives, so the next pass can try again.
+        assertEquals(setOf("1"), second.state.links.keys)
+    }
+
+    @Test
+    fun `a completion older than the lookback window still deletes the event`() {
+        val todoist = FakeTodoist(listOf(task("1", "Ship", "2026-09-10T15:00:00Z")))
+        val calendar = FakeCalendar()
+        val first = engine(todoist, calendar).sync(SyncState())
+
+        todoist.editExternally("1") {
+            it.copy(checked = true, completedAt = "2026-01-01T00:00:00Z")
+        }
+        val second = engine(todoist, calendar).sync(first.state)
+
+        assertEquals(listOf(ActionKind.DELETE_EVENT), second.kinds())
+        assertTrue(calendar.objects.isEmpty())
     }
 
     @Test
@@ -479,8 +562,8 @@ class SyncEngineTest {
         todoist.close("1")
         val second = engine(todoist, calendar).sync(first.state)
 
-        assertEquals(listOf(ActionKind.DELETE_EVENT), second.kinds())
-        assertTrue(calendar.objects.isEmpty())
+        assertEquals(listOf(ActionKind.UPDATE_EVENT), second.kinds())
+        assertTrue(calendar.objects.values.single().data!!.contains("\u2705"))
     }
 
     @Test

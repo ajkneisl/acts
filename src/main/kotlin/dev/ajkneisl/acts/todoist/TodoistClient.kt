@@ -11,6 +11,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
 import java.time.Duration
+import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -48,6 +49,20 @@ class TodoistClient(
 
     fun listProjects(): List<TodoistProject> = paginate("/projects", emptyMap())
 
+    /**
+     * Tasks completed between [since] and [until]. Both `/tasks` and `/tasks/{id}` are documented
+     * as active-only, so a completed task simply vanishes from them -- this is the only way to
+     * tell one from a task that was deleted. The API caps the range at three months.
+     */
+    fun listCompletedTasks(since: Instant, until: Instant): List<TodoistTask> =
+        paginate(
+            "/tasks/completed/by_completion_date",
+            mapOf("since" to utcDateTime.format(since.atZone(ZoneOffset.UTC)),
+                "until" to utcDateTime.format(until.atZone(ZoneOffset.UTC))),
+            // This endpoint publishes a default of 50 and no maximum, so leave it where it is.
+            limit = 50,
+        )
+
     /** The user's own timezone, which is what a due time with no zone means. */
     fun userTimezone(): ZoneId? = runCatching {
         val user = Json.parseToJsonElement(send("GET", "/user", null)).jsonObject
@@ -59,19 +74,23 @@ class TodoistClient(
         json.decodeFromString<TodoistTask>(send("GET", "/tasks/$id", null))
     }.getOrElse { if (it is TodoistException && it.status == 404) null else throw it }
 
-    private inline fun <reified T> paginate(path: String, query: Map<String, String>): List<T> {
+    private inline fun <reified T> paginate(
+        path: String,
+        query: Map<String, String>,
+        limit: Int = 200,
+    ): List<T> {
         val out = mutableListOf<T>()
         var cursor: String? = null
         do {
             val q =
                 query +
                     buildMap {
-                        put("limit", "200")
+                        put("limit", limit.toString())
                         cursor?.let { put("cursor", it) }
                     }
             val page =
                 json.decodeFromString<PaginatedList<T>>(send("GET", path + queryString(q), null))
-            out += page.results
+            out += page.page
             cursor = page.nextCursor
         } while (cursor != null)
         return out

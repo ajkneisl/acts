@@ -5,6 +5,7 @@ import dev.ajkneisl.acts.config.Settings
 import dev.ajkneisl.acts.todoist.TodoistClient
 import dev.ajkneisl.acts.todoist.models.TaskPatch
 import dev.ajkneisl.acts.todoist.models.TodoistTask
+import java.time.Instant
 
 class TodoistSide(
     private val client: TodoistClient,
@@ -36,11 +37,17 @@ class TodoistSide(
         }
     }
 
-    override fun listTasks(): List<TodoistTask> {
+    override fun listTasks(): List<TodoistTask> = inScope(client.listTasks())
+
+    override fun listCompleted(since: Instant, until: Instant): List<TodoistTask> =
+        inScope(client.listCompletedTasks(since, until))
+
+    /** Narrows a list to the projects this sync is configured for. */
+    private fun inScope(tasks: List<TodoistTask>): List<TodoistTask> {
         val include = idsFor(settings.list(Setting.PROJECTS))
         val exclude = idsFor(settings.list(Setting.EXCLUDE_PROJECTS)).orEmpty()
-        if (include == null && exclude.isEmpty()) return client.listTasks()
-        return client.listTasks().filter { task ->
+        if (include == null && exclude.isEmpty()) return tasks
+        return tasks.filter { task ->
             (include == null || task.projectId in include) && task.projectId !in exclude
         }
     }

@@ -17,6 +17,11 @@ object Mapper {
     /** Everything after this in a description is ours, not the user's. */
     const val FOOTER = "\n-- Todoist --\n"
 
+    /**
+     * Goes on a complete task.
+     */
+    const val DONE_MARK = "\u2713 "
+
     fun uidFor(taskId: String): String = "todoist-$taskId@acts.ajkneisl.dev"
 
     /** Todoist stores 4 = P1 (urgent) down to 1 = P4 (none). */
@@ -82,6 +87,21 @@ object Mapper {
     /** Removes our footer so we recover exactly what the user typed. */
     fun stripFooter(description: String): String =
         description.substringBefore(FOOTER).trimEnd()
+
+    // ------------------------------------------------------------------- done
+
+    fun isMarkedDone(event: IcsEvent): Boolean = event.summary.startsWith(DONE_MARK)
+
+    /** The same event, marked as done. Idempotent, so a re-run never stacks the marks up. */
+    fun markDone(event: IcsEvent): IcsEvent =
+        if (isMarkedDone(event)) event
+        else
+            event.copy(
+                summary = DONE_MARK + event.summary,
+                sequence = event.sequence + 1,
+                // We are the ones changing it right now, so the render stamps this pass's time.
+                lastModified = null,
+            )
 
     // -------------------------------------------------------- calendar -> task
 
