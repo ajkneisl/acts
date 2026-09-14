@@ -1,12 +1,11 @@
 package dev.ajkneisl.acts
 
-import dev.ajkneisl.acts.alert.ErrorNotifier
-import dev.ajkneisl.acts.alert.SesMailer
 import dev.ajkneisl.acts.caldav.CalDavClient
 import dev.ajkneisl.acts.config.Setting
 import dev.ajkneisl.acts.config.Settings
-import dev.ajkneisl.acts.health.HealthServer
-import dev.ajkneisl.acts.health.SyncHealth
+import dev.ajkneisl.acts.http.health.HealthEndpoint
+import dev.ajkneisl.acts.http.health.SyncHealth
+import dev.ajkneisl.acts.http.HttpHost
 import dev.ajkneisl.acts.sync.CalDavSide
 import dev.ajkneisl.acts.sync.SyncEngine
 import dev.ajkneisl.acts.sync.SyncState
@@ -15,10 +14,9 @@ import dev.ajkneisl.acts.sync.TodoistSide
 import dev.ajkneisl.acts.sync.models.ActionKind
 import dev.ajkneisl.acts.sync.models.SyncReport
 import dev.ajkneisl.acts.todoist.TodoistClient
-import dev.ajkneisl.acts.todoist.webhook.TodoistWebhookServer
+import dev.ajkneisl.acts.todoist.webhook.TodoistWebhookEndpoint
 import java.nio.file.Path
 import java.nio.file.Paths
-import java.time.Duration
 import java.time.ZoneId
 import kotlin.system.exitProcess
 import org.slf4j.LoggerFactory
@@ -111,105 +109,39 @@ private fun watch() {
             .coerceAtMost(fullEvery)
 
     val trigger = SyncTrigger()
-    val webhooks =
-        if (settings.bool(Setting.WEBHOOK_ENABLED)) {
-            TodoistWebhookServer(
-                    port = settings.int(Setting.WEBHOOK_PORT),
-                    path = settings.text(Setting.WEBHOOK_PATH),
-                    clientSecret =
-                        settings.credential(
-                            Setting.TODOIST_CLIENT_SECRET,
-                            "/text/error-webhook-secret.txt",
-                        ),
-                    trigger = trigger,
-                )
-                .also { it.start() }
-        } else {
-            null
-        }
     val health = SyncHealth()
-    val healthServer =
-        if (settings.bool(Setting.HEALTH_ENABLED)) {
-            HealthServer(
-                    settings.int(Setting.HEALTH_PORT),
-                    settings.text(Setting.HEALTH_PATH),
-                    health,
-                )
-                .also { it.start() }
-        } else {
-            null
-        }
 
-    val mailer =
-        if (settings.bool(Setting.SES_ENABLED)) {
-            runCatching {
-                SesMailer(
-                    host = settings.text(Setting.SES_HOST),
-                    port = settings.int(Setting.SES_PORT),
-                    username = settings.text(Setting.SES_USERNAME),
-                    password = settings.text(Setting.SES_PASSWORD),
-                    from = settings.text(Setting.SES_FROM),
-                    recipients =
-                        settings.list(Setting.SES_TO).ifEmpty {
-                            error("${Setting.SES_TO.variable} has no recipients.")
-                        },
-                )
-            }
-                .getOrElse {
-                    System.err.println("Email alerts are off: ${it.message}")
-                    null
+    // Both endpoints live on one server, so there is a single port to publish and tunnel.
+    val webhookEnabled = settings.bool(Setting.WEBHOOK_ENABLED)
+    val healthEnabled = settings.bool(Setting.HEALTH_ENABLED)
+    val http =
+        if (webhookEnabled || healthEnabled) {
+            HttpHost(settings.int(Setting.HTTP_PORT)).apply {
+                if (webhookEnabled) {
+                    mount(
+                        TodoistWebhookEndpoint(
+                            path = settings.text(Setting.WEBHOOK_PATH),
+                            clientSecret =
+                                settings.credential(
+                                    Setting.TODOIST_CLIENT_SECRET,
+                                    "/text/error-webhook-secret.txt",
+                                ),
+                            trigger = trigger,
+                        )
+                    )
                 }
+                if (healthEnabled) {
+                    mount(HealthEndpoint(settings.text(Setting.HEALTH_PATH), health))
+                }
+                start()
+            }
         } else {
             null
         }
 
-    val notifier = mailer?.let {
-        ErrorNotifier(
-            mailer = it,
-            cooldown = Duration.ofMinutes(settings.long(Setting.SES_COOLDOWN_MINUTES)),
-            health = health,
-        )
-    }
-
-    if (mailer != null && settings.bool(Setting.SES_TEST_ON_START)) {
-        runCatching {
-            mailer.send(
-                "ACTS Test Alert",
-                Resources.template(
-                    "/text/alert-test.txt",
-                    "startedAt" to health.startedAt.toString(),
-                ),
-            )
-        }
-            .onSuccess { println("Test alert sent. Alerting works.") }
-            .onFailure { System.err.println("Test alert FAILED: ${it.message}") }
-    }
-
-    Runtime.getRuntime()
-        .addShutdownHook(
-            Thread {
-                webhooks?.close()
-                healthServer?.close()
-            }
-        )
+    Runtime.getRuntime().addShutdownHook(Thread { http?.close() })
 
     log.info("Watching calendar every {}s, full check every {}s", pollEvery, fullEvery)
-
-    if (webhooks != null) {
-        log.info(
-            "Todoist webhook active on :{}/{}",
-            webhooks.boundPort,
-            settings.text(Setting.WEBHOOK_PATH),
-        )
-    }
-
-    if (healthServer != null) {
-        log.info(
-            "Health endpoint active on :{}/{}",
-            healthServer.port,
-            settings.text(Setting.HEALTH_PATH),
-        )
-    }
 
     var engine: SyncEngine? = null
     var calendarUrl: String? = null
@@ -247,15 +179,11 @@ private fun watch() {
                 lastFullPass = System.nanoTime()
             }
             health.recordSuccess()
-            notifier?.onSuccess()
         } catch (e: Exception) {
             // A transient network or iCloud hiccup should not end the daemon.
             val message = e.message ?: e::class.simpleName.orEmpty()
             System.err.println("sync failed: $message")
-            // Recorded on its own line on purpose: as an argument to a safe call it would be
-            // skipped entirely whenever alerts are disabled, and health would report OK forever.
-            val consecutive = health.recordFailure(message)
-            notifier?.onFailure(message, consecutive)
+            health.recordFailure(message)
         }
 
         // Wait out the rest of the tick, but let a webhook cut it short.

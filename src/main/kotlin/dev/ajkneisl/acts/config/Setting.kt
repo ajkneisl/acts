@@ -21,34 +21,25 @@ enum class Setting(val variable: String, val default: String? = null, val secret
     TIMEZONE("ACTS_TIMEZONE"),
 
     //
+    // http settings
+    //
+
+    /** The webhook and the healthcheck share one server, and so one port. */
+    HTTP_PORT("ACTS_HTTP_PORT", "8080"),
+
+    //
     // webhook settings
     //
 
     WEBHOOK_ENABLED("ACTS_WEBHOOK_ENABLED", "false"),
-    WEBHOOK_PORT("ACTS_WEBHOOK_PORT", "8080"),
     WEBHOOK_PATH("ACTS_WEBHOOK_PATH", "/todoist"),
     TODOIST_CLIENT_SECRET("ACTS_TODOIST_CLIENT_SECRET", secret = true),
-
-    //
-    // SES settings
-    //
-
-    SES_ENABLED("ACTS_SES_ENABLED", "false"),
-    SES_HOST("ACTS_SES_HOST"),
-    SES_PORT("ACTS_SES_PORT", "465"),
-    SES_USERNAME("ACTS_SES_USERNAME"),
-    SES_PASSWORD("ACTS_SES_PASSWORD", secret = true),
-    SES_FROM("ACTS_SES_FROM"),
-    SES_TO("ACTS_SES_TO"),
-    SES_COOLDOWN_MINUTES("ACTS_SES_COOLDOWN_MINUTES", "60"),
-    SES_TEST_ON_START("ACTS_SES_TEST_ON_START", "false"),
 
     //
     // health settings
     //
 
     HEALTH_ENABLED("ACTS_HEALTH_ENABLED", "false"),
-    HEALTH_PORT("ACTS_HEALTH_PORT", "8081"),
     HEALTH_PATH("ACTS_HEALTH_PATH", "/health"),
     STATE_PATH("ACTS_STATE"),
 }

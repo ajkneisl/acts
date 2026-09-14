@@ -1,7 +1,8 @@
 package dev.ajkneisl.acts
 
-import dev.ajkneisl.acts.health.HealthServer
-import dev.ajkneisl.acts.health.SyncHealth
+import dev.ajkneisl.acts.http.health.HealthEndpoint
+import dev.ajkneisl.acts.http.health.SyncHealth
+import dev.ajkneisl.acts.http.HttpHost
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -10,8 +11,10 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -51,39 +54,56 @@ class SyncHealthTest {
     }
 }
 
-class HealthServerTest {
+class HealthEndpointTest {
 
     private lateinit var health: SyncHealth
-    private lateinit var server: HealthServer
+    private lateinit var host: HttpHost
     private val http: HttpClient = HttpClient.newHttpClient()
 
     @BeforeTest
     fun start() {
         health = SyncHealth()
-        server = HealthServer(0, "/health", health).also { it.start() }
+        // Port 0: let the OS pick, so tests never collide with a real service.
+        host = HttpHost(0).apply {
+            mount(HealthEndpoint("/health", health))
+            start()
+        }
     }
 
     @AfterTest
     fun stop() {
-        server.close()
+        host.close()
     }
 
     private fun get(): HttpResponse<String> =
         http.send(
-            HttpRequest.newBuilder(URI.create("http://localhost:${server.port}/health")).GET().build(),
+            HttpRequest.newBuilder(URI.create("http://localhost:${host.port}/health")).GET().build(),
             HttpResponse.BodyHandlers.ofString(),
         )
+
+    private fun body(): JsonObject = Json.parseToJsonElement(get().body()).jsonObject
+
+    private fun stats(): JsonObject = body()["stats"]!!.jsonObject
 
     @Test
     fun `reports ok while the sync is working`() {
         health.recordSuccess()
-        val response = get()
 
-        assertEquals(200, response.statusCode())
-        val body = Json.parseToJsonElement(response.body()).jsonObject
-        assertEquals("ok", body["status"]!!.jsonPrimitive.content)
-        assertEquals(0, body["consecutiveFailures"]!!.jsonPrimitive.content.toInt())
-        assertTrue(body["lastSuccess"]!!.jsonPrimitive.content.startsWith("20"))
+        // 200 is the whole answer: a monitor never has to parse the body to know.
+        assertEquals(200, get().statusCode())
+        val stats = stats()
+        assertEquals(0, stats["consecutiveFailures"]!!.jsonPrimitive.content.toInt())
+        assertTrue(stats["lastSuccess"]!!.jsonPrimitive.content.startsWith("20"))
+    }
+
+    @Test
+    fun `names the build it is running`() {
+        // Proves the whole path works: Gradle stamps the version into acts.properties,
+        // and the report reads it back.
+        val version = body()["version"]!!.jsonPrimitive.content
+
+        assertTrue(version.isNotBlank(), "the report named no version")
+        assertNotEquals("unknown", version, "the build stamp never reached the classpath")
     }
 
     @Test
@@ -92,25 +112,22 @@ class HealthServerTest {
         val response = get()
 
         assertEquals(503, response.statusCode())
-        val body = Json.parseToJsonElement(response.body()).jsonObject
-        assertEquals("unhealthy", body["status"]!!.jsonPrimitive.content)
-        assertEquals("iCloud unreachable", body["lastError"]!!.jsonPrimitive.content)
+        assertEquals("iCloud unreachable", stats()["lastError"]!!.jsonPrimitive.content)
     }
 
     @Test
     fun `reports uptime and time since the last success`() {
         health.recordSuccess()
-        val body = Json.parseToJsonElement(get().body()).jsonObject
+        val stats = stats()
 
-        assertTrue(body["uptimeSeconds"]!!.jsonPrimitive.content.toLong() >= 0)
-        assertTrue(body["secondsSinceLastSuccess"]!!.jsonPrimitive.content.toLong() >= 0)
+        assertTrue(stats["uptimeSeconds"]!!.jsonPrimitive.content.toLong() >= 0)
+        assertTrue(stats["secondsSinceLastSuccess"]!!.jsonPrimitive.content.toLong() >= 0)
     }
 
     @Test
     fun `says so plainly before the first pass has run`() {
-        val body = Json.parseToJsonElement(get().body()).jsonObject
-        assertEquals("null", body["lastSuccess"].toString())
-        assertEquals("ok", body["status"]!!.jsonPrimitive.content)
+        assertEquals("null", stats()["lastSuccess"].toString())
+        assertEquals(200, get().statusCode(), "no pass yet is not the same as a failing one")
     }
 
     @Test
@@ -118,12 +135,13 @@ class HealthServerTest {
         health.recordSuccess()
         val response =
             http.send(
-                HttpRequest.newBuilder(URI.create("http://localhost:${server.port}/health"))
+                HttpRequest.newBuilder(URI.create("http://localhost:${host.port}/health"))
                     .method("HEAD", HttpRequest.BodyPublishers.noBody())
                     .build(),
                 HttpResponse.BodyHandlers.ofString(),
             )
         assertEquals(200, response.statusCode())
+        assertEquals("", response.body(), "a HEAD response must not carry a body")
     }
 
     @Test

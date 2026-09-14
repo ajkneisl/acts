@@ -5,7 +5,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * A wake-up signal from outside the watch loop. This occurs from
- * [dev.ajkneisl.acts.todoist.webhook.TodoistWebhookServer]
+ * [dev.ajkneisl.acts.todoist.webhook.TodoistWebhookEndpoint]
  */
 class SyncTrigger {
     private val permits = Semaphore(0)

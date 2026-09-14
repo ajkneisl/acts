@@ -1,4 +1,0 @@
-The Todoist to Apple Calendar sync is working again.
-
-Recovered at:  {{recoveredAt}}
-Running since: {{startedAt}}

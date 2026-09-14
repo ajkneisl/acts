@@ -47,8 +47,7 @@ class SettingsTest {
                 Setting.CONFLICT_POLICY to "newest_wins",
                 Setting.ON_EVENT_DELETED to "COMPLETE_TASK",
                 Setting.CREATE_TASKS_FROM_EVENTS to "false",
-                Setting.WEBHOOK_PORT to "9000",
-                Setting.SES_TO to "a@example.com,b@example.com",
+                Setting.HTTP_PORT to "9000",
             )
 
         assertEquals("you@example.com", settings[Setting.APPLE_ID])
@@ -61,8 +60,7 @@ class SettingsTest {
             settings.enum<DeletedEventPolicy>(Setting.ON_EVENT_DELETED),
         )
         assertEquals(false, settings.bool(Setting.CREATE_TASKS_FROM_EVENTS))
-        assertEquals(9000, settings.int(Setting.WEBHOOK_PORT))
-        assertEquals(listOf("a@example.com", "b@example.com"), settings.list(Setting.SES_TO))
+        assertEquals(9000, settings.int(Setting.HTTP_PORT))
     }
 
     @Test

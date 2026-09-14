@@ -1,4 +1,4 @@
-package dev.ajkneisl.acts.health
+package dev.ajkneisl.acts.http.health
 
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger

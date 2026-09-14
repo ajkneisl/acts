@@ -29,13 +29,6 @@ class ResourcesTest {
             .replace("{{displayName}}", "Todoist")
             .replace("{{color}}", "#E44332")
             .replace("{{url}}", "https://caldav.icloud.com/")
-            .replace("{{error}}", "iCloud unreachable")
-            .replace("{{consecutive}}", "3")
-            .replace("{{at}}", "2026-09-11T12:00:00Z")
-            .replace("{{lastSuccess}}", "2026-09-11T11:00:00Z")
-            .replace("{{startedAt}}", "2026-09-11T10:00:00Z")
-            .replace("{{recoveredAt}}", "2026-09-11T12:05:00Z")
-            .replace("{{variable}}", "ACTS_SES_TEST_ON_START")
 
     @Test
     fun `every bundled resource loads and is not empty`() {

@@ -29,7 +29,6 @@ ENV ACTS_STATE=/data/state.json \
     JAVA_OPTS="-XX:MaxRAMPercentage=75"
 
 EXPOSE 8080
-EXPOSE 8081
 
 RUN mkdir -p /data && chown -R app:app /data
 VOLUME ["/data"]
@@ -38,6 +37,6 @@ USER app
 WORKDIR /data
 
 HEALTHCHECK --interval=2m --timeout=10s --start-period=30s --retries=3 \
-  CMD curl -fsS "http://localhost:${ACTS_HEALTH_PORT:-8081}${ACTS_HEALTH_PATH:-/health}" >/dev/null || exit 1
+  CMD curl -fsS "http://localhost:${ACTS_HTTP_PORT:-8080}${ACTS_HEALTH_PATH:-/health}" >/dev/null || exit 1
 
 ENTRYPOINT ["acts"]

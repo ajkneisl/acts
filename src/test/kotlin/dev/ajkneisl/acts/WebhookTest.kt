@@ -1,7 +1,8 @@
 package dev.ajkneisl.acts
 
+import dev.ajkneisl.acts.http.HttpHost
 import dev.ajkneisl.acts.sync.SyncTrigger
-import dev.ajkneisl.acts.todoist.webhook.TodoistWebhookServer
+import dev.ajkneisl.acts.todoist.webhook.TodoistWebhookEndpoint
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -52,23 +53,26 @@ class SyncTriggerTest {
     }
 }
 
-class TodoistWebhookServerTest {
+class TodoistWebhookEndpointTest {
 
     private val secret = "test-client-secret"
     private lateinit var trigger: SyncTrigger
-    private lateinit var server: TodoistWebhookServer
+    private lateinit var host: HttpHost
     private val http: HttpClient = HttpClient.newHttpClient()
 
     @BeforeTest
     fun start() {
         trigger = SyncTrigger()
         // Port 0: let the OS pick, so tests never collide with a real service.
-        server = TodoistWebhookServer(0, "/todoist-webhook", secret, trigger).also { it.start() }
+        host = HttpHost(0).apply {
+            mount(TodoistWebhookEndpoint("/todoist-webhook", secret, trigger))
+            start()
+        }
     }
 
     @AfterTest
     fun stop() {
-        server.close()
+        host.close()
     }
 
     private fun sign(body: String): String {
@@ -79,7 +83,7 @@ class TodoistWebhookServerTest {
     }
 
     private fun post(body: String, signature: String?): HttpResponse<String> {
-        val builder = HttpRequest.newBuilder(URI.create("http://localhost:${server.boundPort}/todoist-webhook"))
+        val builder = HttpRequest.newBuilder(URI.create("http://localhost:${host.port}/todoist-webhook"))
             .header("Content-Type", "application/json")
         signature?.let { builder.header("X-Todoist-Hmac-SHA256", it) }
         return http.send(
@@ -145,7 +149,7 @@ class TodoistWebhookServerTest {
         // Regression: a HEAD used to blow up inside the handler, because the JDK server refuses
         // a content length on a bodyless response, and the failure path then failed too.
         val response = http.send(
-            HttpRequest.newBuilder(URI.create("http://localhost:${server.boundPort}/todoist-webhook"))
+            HttpRequest.newBuilder(URI.create("http://localhost:${host.port}/todoist-webhook"))
                 .method("HEAD", HttpRequest.BodyPublishers.noBody()).build(),
             HttpResponse.BodyHandlers.ofString(),
         )
@@ -161,7 +165,7 @@ class TodoistWebhookServerTest {
     @Test
     fun `a GET is refused`() {
         val response = http.send(
-            HttpRequest.newBuilder(URI.create("http://localhost:${server.boundPort}/todoist-webhook"))
+            HttpRequest.newBuilder(URI.create("http://localhost:${host.port}/todoist-webhook"))
                 .GET().build(),
             HttpResponse.BodyHandlers.ofString(),
         )

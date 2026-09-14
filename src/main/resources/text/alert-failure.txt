@@ -1,7 +1,0 @@
-The Todoist to Apple Calendar sync is failing.
-
-Error:                 {{error}}
-Consecutive failures:  {{consecutive}}
-At:                    {{at}}
-Last success:          {{lastSuccess}}
-Running since:         {{startedAt}}
